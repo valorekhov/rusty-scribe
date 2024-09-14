@@ -7,9 +7,9 @@ use log::{info, error};
 
 pub fn copy_to_clipboard(text: &str) -> Result<()> {
     let mut ctx: ClipboardContext = ClipboardProvider::new()
-        .context("Failed to initialize clipboard context")?;
+        .map_err(|e| anyhow::anyhow!("Failed to initialize clipboard context: {}", e))?;
     ctx.set_contents(text.to_owned())
-        .context("Failed to set clipboard contents")?;
+        .map_err(|e| anyhow::anyhow!("Failed to set clipboard contents: {}", e))?;
     info!("Text copied to clipboard.");
     Ok(())
 }
@@ -28,9 +28,9 @@ mod tests {
 
         // Retrieve the text from the clipboard to verify
         let mut ctx: ClipboardContext = ClipboardProvider::new()
-            .context("Failed to initialize clipboard context")?;
+            .map_err(|e| anyhow::anyhow!("Failed to initialize clipboard context: {}", e))?;
         let clipboard_content = ctx.get_contents()
-            .context("Failed to get clipboard contents")?;
+            .map_err(|e| anyhow::anyhow!("Failed to get clipboard contents: {}", e))?;
 
         assert_eq!(clipboard_content, test_text);
         Ok(())

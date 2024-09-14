@@ -4,6 +4,7 @@ use anyhow::{Result, Context};
 use reqwest::blocking::{Client, multipart};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
+use serde_json::json;
 use log::{info, error};
 
 #[derive(Deserialize, Debug, PartialEq)]
@@ -130,10 +131,10 @@ mod tests {
     fn test_transcribe_audio_success() {
         let _m = mock("POST", "/transcribe")
             .match_header("authorization", "Bearer test_api_key")
-            .match_multipart(Matcher::AllOf(vec![
+            .match_body(Matcher::AllOf(vec![
                 Matcher::Exact("model".to_string()),
                 Matcher::Exact("whisper-1".to_string()),
-                Matcher::Regex("file".to_string(), ".*".to_string()),
+                Matcher::Regex(".*".to_string()),
             ]))
             .with_status(200)
             .with_header("content-type", "application/json")
