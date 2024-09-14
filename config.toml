@@ -1,0 +1,19 @@
+
+[endpoints]
+local_whisper = "http://localhost:5000/transcribe"
+hosted_whisper = "https://api.openai.com/v1/audio/transcriptions"
+llm_endpoint = "https://api.openai.com/v1/engines/davinci/completions"
+
+[hotkeys]
+recording = "Shift+Space"
+post_processing_modifier = "Control"
+
+[audio]
+recording_device = "default"
+
+[llm]
+post_processing_prompt = "Please clean up and format the following text:"
+always_post_process = false
+
+[api_keys]
+openai = "your_openai_api_key_here"

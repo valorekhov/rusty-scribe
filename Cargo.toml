@@ -1,0 +1,23 @@
+[package]
+name = "rusty-scribe"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.5"
+rdev = "0.5.1"
+cpal = "0.14"
+hound = "3.4.0"
+reqwest = { version = "0.11", features = ["json", "multipart", "blocking"] }
+tokio = { version = "1", features = ["full"] }
+clipboard = "0.5"
+dialoguer = "0.10"
+serde_json = "1.0"
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.10"
+
+[dev-dependencies]
+tempfile = "3.3.0"
+mockito = "0.31.0"
