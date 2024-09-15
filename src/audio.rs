@@ -1,12 +1,9 @@
-// src/audio.rs
-
 use anyhow::{Result, Context};
+use bytemuck::NoUninit;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::SizedSample;
 use hound::{WavWriter, WavSpec, SampleFormat};
-use std::fs::File;
-use std::path::Path;
 use std::sync::mpsc::{self, Sender};
-use std::thread;
 use std::time::Duration;
 use log::{info, error};
 
@@ -29,7 +26,7 @@ pub fn record_audio(device_name: &str, duration_secs: u64, file_path: &str) -> R
     } else {
         host.input_devices()
             .context("Failed to get input devices")?
-            .find(|d| d.name().unwrap_or_default() == device_name)
+            .find(|d| d.name().map(|n| n == device_name).unwrap_or(false))
             .context("Specified recording device not found")?
     };
 
@@ -58,6 +55,7 @@ pub fn record_audio(device_name: &str, duration_secs: u64, file_path: &str) -> R
         cpal::SampleFormat::F32 => build_stream::<f32>(&device, &config, tx.clone())?,
         cpal::SampleFormat::I16 => build_stream::<i16>(&device, &config, tx.clone())?,
         cpal::SampleFormat::U16 => build_stream::<u16>(&device, &config, tx.clone())?,
+        _ => return Err(anyhow::anyhow!("Unsupported sample format")),
     };
 
     stream.play().context("Failed to start audio stream")?;
@@ -66,10 +64,20 @@ pub fn record_audio(device_name: &str, duration_secs: u64, file_path: &str) -> R
 
     let start = std::time::Instant::now();
     while start.elapsed() < Duration::from_secs(duration_secs) {
-        if let Ok(sample) = rx.recv_timeout(Duration::from_secs(1)) {
-            writer.write_sample(sample)
-                .context("Failed to write audio sample to WAV")?;
+        match rx.recv_timeout(Duration::from_millis(100)) {
+            Ok(sample) => {
+                writer.write_sample(sample)
+                    .context("Failed to write audio sample to WAV")?;
+            },
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
+    }
+    
+    // Drain any remaining samples
+    while let Ok(sample) = rx.try_recv() {
+        writer.write_sample(sample)
+            .context("Failed to write audio sample to WAV")?;
     }
 
     drop(stream);
@@ -78,7 +86,6 @@ pub fn record_audio(device_name: &str, duration_secs: u64, file_path: &str) -> R
     info!("Audio recording saved to {}", file_path);
     Ok(())
 }
-
 /// Helper function to build an input stream
 fn build_stream<T>(
     device: &cpal::Device,
@@ -86,14 +93,14 @@ fn build_stream<T>(
     tx: Sender<i16>,
 ) -> Result<cpal::Stream>
 where
-    T: cpal::Sample,
+    T: cpal::Sample + NoUninit + SizedSample
 {
     device.build_input_stream(
         config,
         move |data: &[T], _: &cpal::InputCallbackInfo| {
-            for &sample in data.iter() {
-                let sample_i16: i16 = cpal::Sample::to_i16(&sample);
-                if tx.send(sample_i16).is_err() {
+            let sample_i16: &[i16] = bytemuck::cast_slice::<T, i16>(data);
+            for &sample in sample_i16.iter() {
+                if tx.send(sample).is_err() {
                     // Receiver disconnected
                     break;
                 }
@@ -102,6 +109,7 @@ where
         move |err| {
             error!("An error occurred on the input stream: {}", err);
         },
+        None,
     ).context("Failed to build input stream")
 }
 
@@ -119,7 +127,6 @@ mod tests {
         let result = list_audio_devices();
         assert!(result.is_ok());
     }
-
     #[test]
     fn test_record_audio_success() {
         // Record a short audio snippet and ensure the file is created.
@@ -130,7 +137,11 @@ mod tests {
         let file_path = temp_dir.path().join("test_recording.wav");
         let file_path_str = file_path.to_str().unwrap();
 
-        let result = record_audio("default", 1, file_path_str);
+        // Increase the duration to ensure we get a complete number of samples
+        let result = record_audio("default", 2, file_path_str);
+        if let Err(e) = &result {
+            eprintln!("Error recording audio: {:?}", e);
+        }
         assert!(result.is_ok());
 
         // Check that the file exists and is not empty

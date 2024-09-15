@@ -1,9 +1,7 @@
-// src/clipboard.rs
-
-use anyhow::{Result, Context};
+use anyhow::Result;
 use clipboard::ClipboardContext;
 use clipboard::ClipboardProvider;
-use log::{info, error};
+use log::info;
 
 pub fn copy_to_clipboard(text: &str) -> Result<()> {
     let mut ctx: ClipboardContext = ClipboardProvider::new()

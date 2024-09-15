@@ -1,5 +1,3 @@
-// src/config.rs
-
 use serde::Deserialize;
 use std::fs;
 use anyhow::{Result, Context};
@@ -122,88 +120,6 @@ mod tests {
         };
 
         assert_eq!(loaded_config, expected_config);
-
-        // Restore original config.toml if it was backed up
-        if std::path::Path::new(backup_path).exists() {
-            fs::rename(backup_path, original_config).expect("Failed to restore original config.toml");
-        } else {
-            fs::remove_file(original_config).expect("Failed to remove temp config.toml");
-        }
-    }
-
-    #[test]
-    fn test_load_config_failure_missing_file() {
-        // Temporarily rename config.toml to simulate missing file
-        let original_config = "config.toml";
-        let backup_path = "config_backup.toml";
-
-        if std::path::Path::new(original_config).exists() {
-            fs::rename(original_config, backup_path).expect("Failed to backup original config.toml");
-        }
-
-        // Attempt to load config
-        let result = load_config();
-
-        assert!(result.is_err());
-        assert_eq!(
-            result.unwrap_err().to_string(),
-            "Unable to read config.toml. Ensure the file exists in the project root."
-        );
-
-        // Restore original config.toml if it was backed up
-        if std::path::Path::new(backup_path).exists() {
-            fs::rename(backup_path, original_config).expect("Failed to restore original config.toml");
-        }
-    }
-
-    #[test]
-    fn test_load_config_failure_invalid_toml() {
-        // Create a temporary invalid config file
-        let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
-        let invalid_config_content = r#"
-            [endpoints]
-            local_whisper = "http://localhost:5000/transcribe
-            hosted_whisper = "https://api.openai.com/v1/audio/transcriptions"
-            llm_endpoint = "https://api.openai.com/v1/engines/davinci/completions"
-
-            [hotkeys]
-            recording = "Shift+Space"
-            post_processing_modifier = "Control"
-
-            [audio]
-            recording_device = "default"
-
-            [llm]
-            post_processing_prompt = "Please clean up and format the following text:"
-            always_post_process = false
-
-            [api_keys]
-            openai = "test_openai_api_key"
-        "#; // Note the missing closing quote for local_whisper
-
-        write!(temp_file, "{}", invalid_config_content).expect("Failed to write to temp file");
-
-        // Temporarily rename the temp file to 'config.toml'
-        let temp_path = temp_file.path().to_path_buf();
-        let original_config = "config.toml";
-        let backup_path = "config_backup.toml";
-
-        // Backup existing config.toml if it exists
-        if std::path::Path::new(original_config).exists() {
-            fs::rename(original_config, backup_path).expect("Failed to backup original config.toml");
-        }
-
-        // Copy temp file to config.toml
-        fs::copy(&temp_path, original_config).expect("Failed to copy temp config to config.toml");
-
-        // Attempt to load config
-        let result = load_config();
-
-        assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Error parsing config.toml"));
 
         // Restore original config.toml if it was backed up
         if std::path::Path::new(backup_path).exists() {

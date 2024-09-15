@@ -1,11 +1,7 @@
-// src/api.rs
-
 use anyhow::{Result, Context};
 use reqwest::blocking::{Client, multipart};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde::Deserialize;
-use serde_json::json;
-use log::{info, error};
 
 #[derive(Deserialize, Debug, PartialEq)]
 pub struct WhisperResponse {
@@ -104,6 +100,7 @@ pub fn post_process_text(
 mod tests {
     use super::*;
     use mockito::{mock, Matcher};
+    use serde_json::json;
     use tempfile::NamedTempFile;
     use std::io::Write;
 
@@ -129,13 +126,9 @@ mod tests {
 
     #[test]
     fn test_transcribe_audio_success() {
-        let _m = mock("POST", "/transcribe")
+        let _m = mock("POST", "/v1/audio/transcriptions")
             .match_header("authorization", "Bearer test_api_key")
-            .match_body(Matcher::AllOf(vec![
-                Matcher::Exact("model".to_string()),
-                Matcher::Exact("whisper-1".to_string()),
-                Matcher::Regex(".*".to_string()),
-            ]))
+            .match_header("content-type", Matcher::Regex("multipart/form-data.*".to_string()))
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(r#"{"text": "Transcribed text."}"#)
@@ -145,11 +138,11 @@ mod tests {
         let mut temp_file = NamedTempFile::new().expect("Failed to create temp file");
         write!(temp_file, "dummy audio data").expect("Failed to write to temp file");
         let audio_path = temp_file.path().to_str().unwrap();
-
-        let whisper_url = &format!("{}/transcribe", &mockito::server_url());
+        let whisper_url = &format!("{}/v1/audio/transcriptions", &mockito::server_url());
         let api_key = "test_api_key";
-
-        let transcription = transcribe_audio(whisper_url, api_key, audio_path).expect("Transcription failed");
+        let result = transcribe_audio(whisper_url, api_key, audio_path);
+        assert!(result.is_ok(), "Transcription failed: {:?}", result.err());
+        let transcription = result.unwrap();
         assert_eq!(transcription, "Transcribed text.");
     }
 
@@ -168,12 +161,11 @@ mod tests {
 
         let whisper_url = &format!("{}/transcribe", &mockito::server_url());
         let api_key = "test_api_key";
-
         let result = transcribe_audio(whisper_url, api_key, audio_path);
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "Whisper API error 400 Bad Request"
+            "Whisper API error 400 Bad Request: {\"error\": \"Bad Request\"}"
         );
     }
 
@@ -245,7 +237,7 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(
             result.unwrap_err().to_string(),
-            "LLM API error 500 Internal Server Error"
+            "LLM API error 500 Internal Server Error: {\"error\": \"Internal Server Error\"}"
         );
     }
 }

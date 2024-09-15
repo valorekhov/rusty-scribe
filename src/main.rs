@@ -8,7 +8,7 @@ mod clipboard;
 
 use config::load_config;
 use hotkeys::{start_hotkey_listener, HotkeyState};
-use audio::{record_audio, list_audio_devices};
+use audio::record_audio;
 use api::{is_local_endpoint_available, transcribe_audio, post_process_text};
 use clipboard::copy_to_clipboard;
 
@@ -153,10 +153,7 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use std::sync::{Arc, Mutex};
-    use config::Config;
-    use hotkeys::HotkeyState;
+    //use super::*;
 
     #[test]
     fn test_main_flow_without_hotkeys() {

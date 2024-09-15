@@ -1,11 +1,8 @@
-// src/hotkeys.rs
-
-use rdev::{Event, EventType, Key, listen, SimulateError};
+use rdev::{Event, EventType, Key, listen};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::collections::HashSet;
 use anyhow::Result;
-use log::info;
 
 /// Represents the application state related to hotkeys
 #[derive(Debug, Clone, PartialEq)]
@@ -89,8 +86,6 @@ pub fn start_hotkey_listener(
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
-    use std::thread;
-    use std::time::Duration;
 
     #[test]
     fn test_parse_hotkey() {
@@ -128,8 +123,8 @@ mod tests {
         let state = Arc::new(Mutex::new(HotkeyState::new()));
 
         // Define hotkeys
-        let recording_hotkey = "Shift+Space";
-        let modifier_hotkey = "Control";
+        let _recording_hotkey = "Shift+Space";
+        let _modifier_hotkey = "Control";
 
         // Start the hotkey listener (it will listen to actual key events)
         // For testing purposes, we'll not actually start the listener
