@@ -18,17 +18,8 @@ pub fn list_audio_devices() -> Result<()> {
 }
 
 /// Records audio from the specified device for the given duration in seconds
-pub fn record_audio(device_name: &str, duration_secs: u64, file_path: &str) -> Result<()> {
-    let host = cpal::default_host();
-
-    let device = if device_name.to_lowercase() == "default" {
-        host.default_input_device().context("No default input device available")?
-    } else {
-        host.input_devices()
-            .context("Failed to get input devices")?
-            .find(|d| d.name().map(|n| n == device_name).unwrap_or(false))
-            .context("Specified recording device not found")?
-    };
+pub fn record_audio(device_name: &str, duration_secs: u64, tx: mpsc::Sender<i16>) -> Result<()> {
+    let device = get_device_from_name( device_name)?;
 
     info!("Using audio device: {}", device.name()?);
 
@@ -36,19 +27,6 @@ pub fn record_audio(device_name: &str, duration_secs: u64, file_path: &str) -> R
 
     let sample_format = config.sample_format();
     let config: cpal::StreamConfig = config.into();
-
-    // Setup WAV writer
-    let spec = WavSpec {
-        channels: config.channels,
-        sample_rate: config.sample_rate.0,
-        bits_per_sample: 16,
-        sample_format: SampleFormat::Int,
-    };
-    let mut writer = WavWriter::create(file_path, spec)
-        .with_context(|| format!("Failed to create WAV file at {}", file_path))?;
-
-    // Create a channel to receive audio samples
-    let (tx, rx) = mpsc::channel();
 
     // Build and run the stream
     let stream = match sample_format {
@@ -62,25 +40,42 @@ pub fn record_audio(device_name: &str, duration_secs: u64, file_path: &str) -> R
 
     info!("Recording audio for {} seconds...", duration_secs);
 
-    let start = std::time::Instant::now();
-    while start.elapsed() < Duration::from_secs(duration_secs) {
-        match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(sample) => {
-                writer.write_sample(sample)
-                    .context("Failed to write audio sample to WAV")?;
-            },
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
+    std::thread::sleep(Duration::from_secs(duration_secs));
+
+    drop(stream);
+
+    info!("Audio recording completed");
+    Ok(())
+}
+
+pub fn get_device_from_name(device_name: &str) -> Result<cpal::Device> {
+    let host = cpal::default_host();
+    if device_name.to_lowercase() == "default" {
+        host.default_input_device().context("No default input device available")
+    } else {
+        host.input_devices()
+            .context("Failed to get input devices")?
+            .find(|d| d.name().map(|n| n == device_name).unwrap_or(false))
+            .context("Specified recording device not found")
     }
-    
-    // Drain any remaining samples
-    while let Ok(sample) = rx.try_recv() {
+}
+
+pub fn save_audio_to_wav(rx: mpsc::Receiver<i16>, file_path: &str, config: &cpal::StreamConfig) -> Result<()> {
+    // Setup WAV writer
+    let spec = WavSpec {
+        channels: config.channels,
+        sample_rate: config.sample_rate.0,
+        bits_per_sample: 16,
+        sample_format: SampleFormat::Int,
+    };
+    let mut writer = WavWriter::create(file_path, spec)
+        .with_context(|| format!("Failed to create WAV file at {}", file_path))?;
+
+    while let Ok(sample) = rx.recv() {
         writer.write_sample(sample)
             .context("Failed to write audio sample to WAV")?;
     }
 
-    drop(stream);
     writer.finalize().context("Failed to finalize WAV file")?;
 
     info!("Audio recording saved to {}", file_path);
@@ -129,44 +124,30 @@ mod tests {
     }
     #[test]
     fn test_record_audio_success() {
-        // Record a short audio snippet and ensure the file is created.
+        // Record a short audio snippet and ensure data is sent to the buffer.
         // Note: This test will actually record audio from the default device.
         // It's better to mock the audio input, but for simplicity, we'll perform a real recording.
 
-        let temp_dir = tempdir().expect("Failed to create temp dir");
-        let file_path = temp_dir.path().join("test_recording.wav");
-        let file_path_str = file_path.to_str().unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel::<i16>();
 
         // Increase the duration to ensure we get a complete number of samples
-        let result = record_audio("default", 2, file_path_str);
+        let result = record_audio("default", 2, sender);
         if let Err(e) = &result {
             eprintln!("Error recording audio: {:?}", e);
         }
         assert!(result.is_ok());
 
-        // Check that the file exists and is not empty
-        assert!(file_path.exists());
-        let metadata = fs::metadata(&file_path).expect("Failed to get file metadata");
-        assert!(metadata.len() > 0);
+        // Check that we received some data
+        let received: Vec<i16> = receiver.iter().collect();
+        assert!(!received.is_empty());
 
-        // Clean up
-        temp_dir.close().expect("Failed to delete temp dir");
+        // No need for cleanup as we're using in-memory buffer
     }
 
     #[test]
     fn test_record_audio_invalid_device() {
-        // Attempt to record using an invalid device name
-        let temp_dir = tempdir().expect("Failed to create temp dir");
-        let file_path = temp_dir.path().join("test_recording_invalid.wav");
-        let file_path_str = file_path.to_str().unwrap();
-
-        let result = record_audio("InvalidDeviceName", 1, file_path_str);
+        let (sender, _) = std::sync::mpsc::channel::<i16>();
+        let result = record_audio("InvalidDeviceName", 1, sender);
         assert!(result.is_err());
-
-        // Ensure the file was not created
-        assert!(!file_path.exists());
-
-        // Clean up
-        temp_dir.close().expect("Failed to delete temp dir");
     }
 }

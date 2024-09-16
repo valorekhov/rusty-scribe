@@ -1,179 +1,165 @@
-// src/main.rs
-
-mod config;
-mod hotkeys;
-mod audio;
-mod api;
 mod clipboard;
 
-use config::load_config;
-use hotkeys::{start_hotkey_listener, HotkeyState};
-use audio::record_audio;
-use api::{is_local_endpoint_available, transcribe_audio, post_process_text};
 use clipboard::copy_to_clipboard;
 
-use anyhow::{Result, Context};
-use std::sync::{Arc, Mutex};
-use std::thread;
+use anyhow::{anyhow, Result};
+use clap::Parser;
+use log::error;
+use log::info;
+use screenpipe_audio::create_whisper_channel;
+use screenpipe_audio::default_input_device;
+use screenpipe_audio::default_output_device;
+use screenpipe_audio::list_audio_devices;
+use screenpipe_audio::parse_audio_device;
+use screenpipe_audio::record_and_transcribe;
+use screenpipe_audio::AudioDevice;
+use screenpipe_audio::AudioTranscriptionEngine;
+use screenpipe_audio::VadEngineEnum;
+
+use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::time::Duration;
-use dialoguer::Confirm;
-use log::{info, error};
-use env_logger::Env;
 
-fn main() -> Result<()> {
-    // Initialize logging
-    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+struct Args {
+    #[clap(
+        short,
+        long,
+        help = "Audio device name (can be specified multiple times)"
+    )]
+    audio_device: Vec<String>,
 
-    // Load configuration
-    let config = load_config()?;
-    info!("Configuration loaded successfully.");
+    #[clap(long, help = "List available audio devices")]
+    list_audio_devices: bool,
 
-    // Optionally list audio devices
-    // Uncomment the following line to list devices and exit
-    // list_audio_devices()?;
-    // return Ok(());
+    #[clap(long, help = "Deepgram API key")]
+    deepgram_api_key: Option<String>,
 
-    // Initialize shared hotkey state
-    let state = Arc::new(Mutex::new(HotkeyState::new()));
-
-    // Start hotkey listener
-    start_hotkey_listener(
-        &config.hotkeys.recording,
-        &config.hotkeys.post_processing_modifier,
-        Arc::clone(&state),
-    ).context("Failed to start hotkey listener")?;
-    info!("Hotkey listener started.");
-
-    // Main loop
-    loop {
-        {
-            let current_state = state.lock().unwrap().clone();
-
-            if current_state.is_recording {
-                // Determine the duration to record based on how long the hotkey is pressed
-                // For simplicity, we'll record until the hotkey is released
-                // Implementing this requires more complex event handling
-                // Here, we'll simulate a fixed duration recording
-                let recording_duration = 5; // seconds
-                let audio_file = "recording.wav";
-
-                info!("Starting audio recording...");
-
-                if let Err(e) = record_audio(&config.audio.recording_device, recording_duration, audio_file) {
-                    error!("Audio recording failed: {:?}", e);
-                    continue;
-                }
-
-                // After recording, process the audio
-                // Determine which Whisper endpoint to use
-                let use_local = is_local_endpoint_available(&config.endpoints.local_whisper);
-                let whisper_url = if use_local {
-                    info!("Using local Whisper endpoint.");
-                    &config.endpoints.local_whisper
-                } else {
-                    info!("Using hosted Whisper endpoint.");
-                    &config.endpoints.hosted_whisper
-                };
-
-                // If using hosted Whisper, prompt for sensitive data
-                let proceed = if !use_local {
-                    Confirm::new()
-                        .with_prompt("Are you sure the audio does not contain sensitive data you don't want on the internet?")
-                        .default(false)
-                        .interact()?
-                } else {
-                    true
-                };
-
-                if !proceed {
-                    info!("User aborted due to sensitive data.");
-                    continue;
-                }
-
-                // Transcribe audio
-                let transcription = match transcribe_audio(
-                    whisper_url,
-                    &config.api_keys.openai,
-                    audio_file,
-                ) {
-                    Ok(text) => {
-                        info!("Transcription successful.");
-                        text
-                    }
-                    Err(e) => {
-                        error!("Transcription failed: {:?}", e);
-                        continue;
-                    }
-                };
-
-                info!("Transcription: {}", transcription);
-
-                // Determine if post-processing is needed
-                let post_processing_needed = current_state.is_post_processing || config.llm.always_post_process;
-
-                let final_text = if post_processing_needed {
-                    info!("Post-processing enabled. Sending transcription to LLM.");
-                    match post_process_text(
-                        &config.endpoints.llm_endpoint,
-                        &config.api_keys.openai,
-                        &config.llm.post_processing_prompt,
-                        &transcription,
-                    ) {
-                        Ok(text) => {
-                            info!("Post-processing successful.");
-                            text
-                        }
-                        Err(e) => {
-                            error!("Post-processing failed: {:?}", e);
-                            transcription.clone()
-                        }
-                    }
-                } else {
-                    transcription.clone()
-                };
-
-                info!("Final Text: {}", final_text);
-
-                // Copy to clipboard
-                if let Err(e) = copy_to_clipboard(&final_text) {
-                    error!("Failed to copy to clipboard: {:?}", e);
-                }
-
-                // Reset recording state
-                let mut state_lock = state.lock().unwrap();
-                state_lock.is_recording = false;
-                state_lock.is_post_processing = false;
-            }
-        }
-
-        // Sleep briefly to reduce CPU usage
-        thread::sleep(Duration::from_millis(100));
-    }
+    #[clap(long, help = "Place the output into clipboard")]
+    copy_to_clipboard: bool,
 }
 
-#[cfg(test)]
-mod tests {
-    //use super::*;
-
-    #[test]
-    fn test_main_flow_without_hotkeys() {
-        // Testing the main function's loop is not feasible as it contains an infinite loop.
-        // Instead, consider refactoring the main logic into a separate function that can be tested.
-        // For example, extracting the processing steps into a function and testing that.
-
-        // This test serves as a placeholder to indicate that main loop testing requires refactoring.
-        assert!(true);
+fn print_devices(devices: &[AudioDevice]) {
+    println!("Available audio devices:");
+    for (_, device) in devices.iter().enumerate() {
+        println!("  {}", device);
     }
 
-    // Example of refactoring for testability
-    /*
-    fn process_recording(config: &Config, state: &HotkeyState) -> Result<()> {
-        // Extracted processing logic
+    #[cfg(target_os = "macos")]
+    println!("On macOS, it's not intuitive but output devices are your displays");
+}
+
+// ! usage - cargo run --bin screenpipe-audio -- --audio-device "Display 1 (output)"
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    use env_logger::Builder;
+    use log::LevelFilter;
+
+    Builder::new()
+        .filter(None, LevelFilter::Debug)
+        .filter_module("tokenizers", LevelFilter::Error)
+        .init();
+
+    let args = Args::parse();
+
+    let devices = list_audio_devices().await?;
+
+    if args.list_audio_devices {
+        print_devices(&devices);
+        return Ok(());
     }
 
-    #[test]
-    fn test_process_recording() {
-        // Implement tests for the extracted function
+    let deepgram_api_key = args.deepgram_api_key;
+
+    let devices = if args.audio_device.is_empty() {
+        vec![default_input_device()?, default_output_device().await?]
+    } else {
+        args.audio_device
+            .iter()
+            .map(|d| parse_audio_device(d))
+            .collect::<Result<Vec<_>>>()?
+    };
+
+    if devices.is_empty() {
+        return Err(anyhow!("No audio input devices found"));
     }
-    */
+
+    // delete .mp4 files (output*.mp4)
+    std::fs::remove_file("output_0.mp4").unwrap_or_default();
+    std::fs::remove_file("output_1.mp4").unwrap_or_default();
+
+    let chunk_duration = Duration::from_secs(5);
+    let output_path = PathBuf::from("output.mp4");
+    let (whisper_sender, mut whisper_receiver, _) = create_whisper_channel(
+        Arc::new(AudioTranscriptionEngine::WhisperTiny),
+        VadEngineEnum::WebRtc, // Or VadEngineEnum::WebRtc, hardcoded for now
+        deepgram_api_key,
+        &output_path,
+    )
+    .await?;
+    // Spawn threads for each device
+    let recording_threads: Vec<_> = devices
+        .into_iter()
+        .enumerate()
+        .map(|(_, device)| {
+            let device = Arc::new(device);
+            let whisper_sender = whisper_sender.clone();
+            let device_control = Arc::new(AtomicBool::new(true));
+            let device_clone = Arc::clone(&device);
+
+            tokio::spawn(async move {
+                let device_control_clone = Arc::clone(&device_control);
+                let device_clone_2 = Arc::clone(&device_clone);
+
+                record_and_transcribe(
+                    device_clone_2,
+                    chunk_duration,
+                    whisper_sender,
+                    device_control_clone,
+                )
+            })
+        })
+        .collect();
+    let mut consecutive_timeouts = 0;
+    let max_consecutive_timeouts = 3; // Adjust this value as needed
+
+    // Main loop to receive and print transcriptions
+    let mut transcribed_text = String::new();
+    loop {
+        match whisper_receiver.try_recv() {
+            Ok(result) => {
+                info!("Transcription: {:?}", result);
+                if let Some(text) = result.transcription {
+                    transcribed_text.push_str(&text);
+                    transcribed_text.push(' ');
+                }
+                consecutive_timeouts = 0; // Reset the counter on successful receive
+            }
+            Err(_) => {
+                consecutive_timeouts += 1;
+                if consecutive_timeouts >= max_consecutive_timeouts {
+                    info!("No transcriptions received for a while, stopping...");
+                    break;
+                }
+                continue;
+            }
+        }
+    }
+    if args.copy_to_clipboard  {
+        info!("Copying to clipboard: {:?}", transcribed_text);
+        if let Err(e) = copy_to_clipboard(&transcribed_text) {
+            error!("Failed to copy to clipboard: {:?}", e);
+        }
+    }
+
+    // Wait for all recording threads to finish
+    for (i, thread) in recording_threads.into_iter().enumerate() {
+        let file_path = thread.await.unwrap().await;
+        println!("Recording {} complete: {:?}", i, file_path);
+    }
+
+    Ok(())
 }

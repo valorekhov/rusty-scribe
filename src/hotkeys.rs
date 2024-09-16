@@ -1,6 +1,5 @@
 use rdev::{Event, EventType, Key, listen};
 use std::sync::{Arc, Mutex};
-use std::thread;
 use std::collections::HashSet;
 use anyhow::Result;
 
@@ -38,7 +37,7 @@ pub fn parse_hotkey(hotkey: &str) -> HashSet<Key> {
 }
 
 /// Starts listening to global keyboard events and updates the shared state accordingly
-pub fn start_hotkey_listener(
+pub async fn start_hotkey_listener(
     config_recording: &str,
     config_modifier: &str,
     state: Arc<Mutex<HotkeyState>>,
@@ -46,14 +45,9 @@ pub fn start_hotkey_listener(
     let recording_keys = parse_hotkey(config_recording);
     let modifier_keys = parse_hotkey(config_modifier);
 
-    // Clone the sets for the thread
-    let recording_keys = recording_keys.clone();
-    let modifier_keys = modifier_keys.clone();
+    let pressed_keys = Arc::new(Mutex::new(HashSet::new()));
 
-    thread::spawn(move || {
-        // Set to track currently pressed keys
-        let pressed_keys = Arc::new(Mutex::new(HashSet::new()));
-
+    tokio::task::spawn(async move {
         if let Err(error) = listen(move |event: Event| {
             let mut pressed = pressed_keys.lock().unwrap();
 
@@ -67,7 +61,6 @@ pub fn start_hotkey_listener(
                 _ => {}
             }
 
-            // Check if recording hotkey is pressed
             let recording_active = recording_keys.iter().all(|k| pressed.contains(k));
             let modifier_active = modifier_keys.iter().all(|k| pressed.contains(k));
 
@@ -77,7 +70,8 @@ pub fn start_hotkey_listener(
         }) {
             println!("Error in hotkey listener: {:?}", error);
         }
-    });
+    })
+    .await?;
 
     Ok(())
 }

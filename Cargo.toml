@@ -1,5 +1,5 @@
 [package]
-name = "rusty-scribe"
+name = "rusty_scribe"
 version = "0.1.0"
 edition = "2021"
 
@@ -18,6 +18,9 @@ anyhow = "1.0"
 log = "0.4"
 env_logger = "0.10"
 bytemuck = "1.18.0"
+screenpipe-audio = { git = "https://github.com/mediar-ai/screenpipe.git" }
+chrono = "0.4.38"
+clap = "4.5.17"
 
 [dev-dependencies]
 tempfile = "3.3.0"
